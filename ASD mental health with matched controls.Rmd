@@ -1,0 +1,248 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(readr)
+```
+
+inclusion/exclusion criteria
+1. at least 1 encounter in 2012 - 2014
+I specifically defined 1 encounter as 1 record in the encounter diagnosis table or the billing table
+```{r}
+Billing <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Billing.csv", 
+    col_types = cols_only(DiagnosisCodeType_calc = col_guess(), 
+        DiagnosisCode_calc = col_guess(), 
+        DiagnosisText_calc = col_guess(), 
+        Network_ID = col_guess(), Patient_ID = col_character(), 
+        ServiceCode = col_guess(), ServiceDate = col_guess(), 
+        Site_ID = col_character()))
+
+
+Billing['Year'] <- substring(Billing$ServiceDate, 1, 4)
+
+billing <- Billing %>% filter(Year == "2012" | Year == "2013" | Year == "2014")
+
+#unique(c(unique(billing$Patient_ID), unique(ed$Patient_ID)))
+EncounterDiagnosis <- read_csv("~/Documents/Grad School 2018 Fall/ASD/EncounterDiagnosis.csv", 
+    col_types = cols_only(DateCreated = col_guess(), 
+        DiagnosisCode_calc = col_guess(), 
+        DiagnosisText_calc = col_guess(), 
+        Network_ID = col_guess(), Patient_ID = col_character(), 
+        Site_ID = col_character()))
+
+
+EncounterDiagnosis['Year'] <- substring(EncounterDiagnosis$DateCreated, 1, 4)
+ed <- EncounterDiagnosis %>% filter(Year == "2012" | Year == "2013" | Year == "2014")
+
+one <- tbl_df(unique(c(unique(billing$Patient_ID), unique(ed$Patient_ID))))
+#wanted to get a list of patients that exist in billing table and encounter diagnosis table
+
+Patient <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Patient.csv", 
+    col_types = cols_only(BirthYear = col_number(), 
+        Patient_ID = col_character(), Sex = col_guess()))
+
+one['Age'] <- NA
+one$Age <- 2016 - Patient$BirthYear[match(one$value, Patient$Patient_ID)]
+
+two <- one %>% filter(Age<= 25)
+
+b <- Billing[Billing$Patient_ID %in% one, ] 
+ed <- EncounterDiagnosis[EncounterDiagnosis$Patient_ID %in% one, ]
+
+#one is the cohort of all the people who have at least 1 encounter in 2012 - 2014
+#b is billing records for all years for all patients who were active in 2012 - 2014
+#ed is encounter diagnosis records for all years for all patients who were active in 2012 - 2014
+```
+
+2 physician visits with ASD ICD code or ASD in problem list
+billing code = 299
+
+These must have occured from the years of 2012 - 2014? And then after their first ASD visit what happened? 
+
+Does it have to be ASD visit or first ASD visit? 
+
+For all the people in cohort, when was hte first time they had ASD? it's likely outside of our study range
+```{r}
+HealthCondition <- read_csv("~/Documents/Grad School 2018 Fall/ASD/HealthCondition.csv", 
+    col_types = cols_only(ActiveInactiveFlag = col_guess(), 
+        DateCreated = col_guess(), DateOfOnset = col_guess(), 
+        DiagnosisCodeType_calc = col_guess(), 
+        DiagnosisCode_calc = col_guess(), 
+        DiagnosisText_calc = col_guess(), 
+        Patient_ID = col_character(), SignificantNegativeFlag = col_guess(), 
+        Site_ID = col_character()))
+
+asd.hc <- HealthCondition %>% filter(substring(DiagnosisCode_calc, 1, 3) == '299') %>% mutate(Year = substring(DateCreated, 1, 4))
+
+
+asd.b <- Billing %>% filter(substring(DiagnosisCode_calc, 1, 3) == '299')
+
+asd.ed <- EncounterDiagnosis %>% filter(substring(DiagnosisCode_calc, 1, 3) == "299")
+
+asd.visits <- full_join(asd.b %>% group_by(Patient_ID) %>% summarize(billing_n = n()), asd.ed %>% group_by(Patient_ID) %>% summarize(ed_n = n()))
+
+asd.visits[is.na(asd.visits)] <- 0
+asd.visits['sum_n'] <- rowSums(asd.visits[2:3], )
+
+three <- unique(c(asd.visits$Patient_ID[asd.visits$sum_n > 1], asd.hc$Patient_ID)) # at least two asd visits, 
+
+# two.2 <- unique(c(asd.visits$Patient_ID[asd.visits$sum_n > 0], asd.hc$Patient_ID))
+# two.2 <- tbl_df(two.2[two.2 %in% one])
+
+three <- tbl_df(three[three %in% two$value])
+
+#two is the cohort of people who have at least 2 asd encounters or 1 asd record in health condition in 2012-2014, and who have encounters in 2012 - 2014
+#previously two is 3110 rows
+#now two is 1281
+```
+
+subset of two, when is the first time that these people had ASD related visits? 
+take everyone who has had billing code asd (299) from any of the 3 tables, 
+```{r}
+firstasd.b <- Billing %>% filter(substring(DiagnosisCode_calc, 1, 3) == '299') %>% group_by(Patient_ID) %>% slice(which.min(ymd(ServiceDate))) %>% select(Patient_ID, ServiceDate)
+
+firstasd.e <- EncounterDiagnosis %>% filter(substring(DiagnosisCode_calc, 1, 3) == '299') %>% group_by(Patient_ID) %>% slice(which.min(ymd(DateCreated))) %>% select(Patient_ID, DateCreated)
+
+firstasd.hc <- HealthCondition %>% filter(substring(DiagnosisCode_calc, 1, 3) == '299') %>% group_by(Patient_ID) %>% slice(which.min(ymd(DateCreated))) %>% select(Patient_ID, DateCreated)
+
+firstasd <- full_join(full_join(firstasd.b, firstasd.e, by = "Patient_ID"), firstasd.hc, by = "Patient_ID")
+
+firstasd['earliestdate'] <- apply(firstasd[,2:4], 1, min, na.rm = T)
+
+one['firstasd'] <- NA
+one$firstasd <- firstasd$earliestdate[match(one$value, firstasd$Patient_ID)]
+
+first ASD not important as long as they have ASD at some point
+# three <- one %>% filter(substring(firstasd, 1, 4) == "2012" |substring(firstasd, 1, 4) == "2013" | substring(firstasd, 1, 4) == "2012")
+# 
+# three['Patient_ID'] <- three$value
+
+# two.2['firstasd'] <- firstasd$earliestdate[match(two.2$value, firstasd$Patient_ID)]
+# 
+# two.2 <- two.2 %>% mutate(Year = substring(firstasd, 1, 4)) %>% filter(Year >= 2012)
+
+#firstasd contains patient IDs and the first ever recorded ASD billing code dates for all patients who has ever had ASD in dataset
+
+#note that firstasd DOES NOT include people who had first ASD AFTER 2014
+```
+
+matched cohort - need to have no neurological disorders
+```{r}
+#find list of patients who have never had these codes in either billing table, health condition table, or encounter daignosis table
+
+
+neuro.hc <- HealthCondition %>% filter(substring(DiagnosisCode_calc, 1, 3) == '345' | DiagnosisCode_calc == "780.39" | substring(DiagnosisCode_calc, 1, 3) == "758" | DiagnosisCode_calc == "277.00" | substring(DiagnosisCode_calc, 1, 5) == "333.4" | substring(DiagnosisCode_calc, 1, 5) == "282.6" | substring(DiagnosisCode_calc, 1, 5) == "759.8" | substring(DiagnosisCode_calc, 1, 5) == "299.0" | DiagnosisCode_calc == "299.80" |   substring(DiagnosisCode_calc, 1, 5) == "299.9" | DiagnosisCode_calc == "314.00" | substring(DiagnosisCode_calc, 1, 5) == "343.9" | substring(DiagnosisCode_calc, 1, 3) == '317' | substring(DiagnosisCode_calc, 1, 3) == '318' | substring(DiagnosisCode_calc, 1, 3) == '319' |    
+DiagnosisCode_calc == "760.71" | DiagnosisCode_calc == "307.22" | DiagnosisCode_calc == "307.23" |  substring(DiagnosisCode_calc, 1, 3) == "315")
+
+neuro.b <- Billing %>% filter(substring(DiagnosisCode_calc, 1, 3) == '345' | DiagnosisCode_calc == "780.39" | substring(DiagnosisCode_calc, 1, 3) == "758" | DiagnosisCode_calc == "277.00" | substring(DiagnosisCode_calc, 1, 5) == "333.4" | substring(DiagnosisCode_calc, 1, 5) == "282.6" | substring(DiagnosisCode_calc, 1, 5) == "759.8" | substring(DiagnosisCode_calc, 1, 5) == "299.0" | DiagnosisCode_calc == "299.80" |   substring(DiagnosisCode_calc, 1, 5) == "299.9" | DiagnosisCode_calc == "314.00" | substring(DiagnosisCode_calc, 1, 5) == "343.9" | substring(DiagnosisCode_calc, 1, 3) == '317' | substring(DiagnosisCode_calc, 1, 3) == '318' | substring(DiagnosisCode_calc, 1, 3) == '319' |    
+DiagnosisCode_calc == "760.71" | DiagnosisCode_calc == "307.22" | DiagnosisCode_calc == "307.23" |  substring(DiagnosisCode_calc, 1, 3) == "315")
+
+neuro.ed <- EncounterDiagnosis %>% filter(substring(DiagnosisCode_calc, 1, 3) == '345' | DiagnosisCode_calc == "780.39" | substring(DiagnosisCode_calc, 1, 3) == "758" | DiagnosisCode_calc == "277.00" | substring(DiagnosisCode_calc, 1, 5) == "333.4" | substring(DiagnosisCode_calc, 1, 5) == "282.6" | substring(DiagnosisCode_calc, 1, 5) == "759.8" | substring(DiagnosisCode_calc, 1, 5) == "299.0" | DiagnosisCode_calc == "299.80" |   substring(DiagnosisCode_calc, 1, 5) == "299.9" | DiagnosisCode_calc == "314.00" | substring(DiagnosisCode_calc, 1, 5) == "343.9" | substring(DiagnosisCode_calc, 1, 3) == '317' | substring(DiagnosisCode_calc, 1, 3) == '318' | substring(DiagnosisCode_calc, 1, 3) == '319' |    
+DiagnosisCode_calc == "760.71" | DiagnosisCode_calc == "307.22" | DiagnosisCode_calc == "307.23" |  substring(DiagnosisCode_calc, 1, 3) == "315")
+
+
+neuro.vec <- unique(c(unique(neuro.hc$Patient_ID), unique(neuro.b$Patient_ID), unique(neuro.ed$Patient_ID)))
+
+three <- tbl_df(three[three %in% two$value])
+```
+
+want to ensure that all patients have at least records in medication table
+```{r}
+Medication <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Medication.csv", 
+    col_types = cols_only(Code_calc = col_guess(), 
+        DateCreated = col_guess(), Patient_ID = col_character(), 
+        StartDate = col_guess(), StopDate = col_guess()))
+
+AllergyIntolerance <- read_csv("~/Documents/Grad School 2018 Fall/ASD/AllergyIntolerance.csv", 
+    col_types = cols_only(AllergyStatus = col_character(), 
+        Category = col_guess(), CodeType_calc = col_guess(), 
+        Code_calc = col_guess(), DateCreated = col_guess(), 
+        Name_calc = col_guess(), Patient_ID = col_character(), 
+        ReactionType = col_character(), Severity = col_character(), 
+        StartDate = col_guess()))
+
+Referral <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Referral.csv", 
+    col_types = cols_only(DateCreated = col_guess(), 
+        Name_calc = col_guess(), Patient_ID = col_character()))
+
+PatientProvider <- read_csv("~/Documents/Grad School 2018 Fall/ASD/PatientProvider.csv", 
+    col_types = cols_only(Patient_ID = col_character(), 
+        Provider_ID = col_character()))
+
+Provider <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Provider.csv", 
+    col_types = cols(Provider_ID = col_character()))
+
+Network <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Network.csv")
+
+Lab <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Lab.csv", 
+    col_types = cols_only(Name_calc = col_character(), 
+        Patient_ID = col_character(), PerformedDate = col_character(), 
+        TestResult_calc = col_guess(), UnitOfMeasure_calc = col_guess()))
+
+HealthCondition <- read_csv("~/Documents/Grad School 2018 Fall/ASD/HealthCondition.csv", 
+    col_types = cols_only(ActiveInactiveFlag = col_guess(), 
+        DateOfOnset = col_guess(), DiagnosisCode_calc = col_guess(), 
+        DiagnosisText_calc = col_guess(), 
+        Patient_ID = col_character()))
+
+
+Exam <- read_csv("~/Documents/Grad School 2018 Fall/ASD/Exam.csv", 
+    col_types = cols_only(DateCreated = col_guess(), 
+        Exam1 = col_guess(), Exam2 = col_character(), 
+        Patient_ID = col_character(), Result1_calc = col_guess(), 
+        Result2_calc = col_double(), UnitOfMeasure_calc = col_guess()))
+
+
+
+med <- Medication %>% filter(!is.na(DateCreated)) %>% filter(substring(DateCreated, 1, 4) >= 2012)
+
+DiseaseCase <- read_csv("~/Documents/Grad School 2018 Fall/ASD/DiseaseCase.csv", 
+    col_types = cols_only(DateOfOnset = col_guess(), 
+        Disease = col_guess(), Patient_ID = col_character()))
+
+cohort <- three[three$Patient_ID %in% med$Patient_ID, ]
+
+billing <- Billing[Billing$Patient_ID %in% cohort$Patient_ID, ]
+encounterdiagnosis <- EncounterDiagnosis[EncounterDiagnosis$Patient_ID %in% cohort$Patient_ID, ]
+medication <- Medication[Medication$Patient_ID %in% cohort$Patient_ID, ]
+allergyintolerance <- AllergyIntolerance[AllergyIntolerance$Patient_ID %in% cohort$Patient_ID, ]
+referral <- Referral[Referral$Patient_ID %in% cohort$Patient_ID, ]
+lab <- Lab[Lab$Patient_ID %in% cohort$Patient_ID, ]
+healthcondition <- HealthCondition[HealthCondition$Patient_ID %in% cohort$Patient_ID, ]
+
+exam <- Exam[Exam$Patient_ID %in% cohort$Patient_ID, ]
+
+diseasecase <- DiseaseCase[DiseaseCase$Patient_ID %in%  cohort$Patient_ID, ]
+```
+
+```{r}
+two.2['encounterdate'] <- NA
+
+two.2['Patient_ID'] <- two.2$value
+#names(two.2) <- c("Patient_ID", "EncounterDate")
+ed.two.2 <- ed[ed$Patient_ID %in% two.2$Patient_ID, ]
+b.two.2 <- b[b$Patient_ID %in% two.2$Patient_ID,]
+
+#encounterdiagnosis 
+three.2 <- merge(ed.two.2 %>% group_by(Patient_ID) %>% slice(which.max(ymd(DateCreated))) %>% mutate(eddate = DateCreated) %>% select(Patient_ID, eddate), b.two.2 %>% group_by(Patient_ID) %>% slice(which.max(ymd(ServiceDate))) %>% mutate(billingdate = ServiceDate) %>%  select(Patient_ID, billingdate))
+
+three.2['date'] <- pmax(three.2$billingdate, three.2$eddate)
+
+
+
+three.2['age'] <- as.numeric(substring(three.2$date, 1, 4)) - as.numeric(Patient$BirthYear[match(three.2$Patient_ID, Patient$Patient_ID)])
+
+#cohort 
+cohort.2 <- three.2 %>% filter(age <= 18)
+table(substring(cohort.2$date, 1, 4))
+
+med.2 <- Medication[Medication$Patient_ID %in% cohort.2$Patient_ID, ]
+med.2['firstdate'] <- firstasd$earliestdate[match(med.2$Patient_ID, firstasd$Patient_ID)]
+
+med.2 <- med.2 %>% filter(DateCreated >= firstdate)
+length(unique(med.2$Patient_ID))
+
+#length of other cohort is 391
+```
